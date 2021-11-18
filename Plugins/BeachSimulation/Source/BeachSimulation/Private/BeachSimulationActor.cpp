@@ -14,6 +14,8 @@
 #define CLOSESTNEIGHBOR_TYPE 4 
 // INTEGRATION_TYPE: 1 - Euler, 2 - leapfrog
 #define INTEGRATION_TYPE 1
+// INTEGRATION_STEP: 1 - adaptive, 2 -constant
+#define INTEGRATION_STEP 2
 
 
 ABeachSimulationActor::ABeachSimulationActor()
@@ -290,7 +292,7 @@ float ABeachSimulationActor::FindIntegrationStep()
 		vStep = KernelSize / FMath::Max(1.f, maxv),
 		cStep = KernelSize / maxc,
 		aStep = FMath::Sqrt(KernelSize / maxa);
-	return FMath::Max(1.f / 24.f, FMath::Min(FMath::Min(vStep, cStep), aStep));
+	return FMath::Max(1.f / 240.f, FMath::Min(FMath::Min(vStep, cStep), aStep));
 }
 
 void ABeachSimulationActor::UpdateParticles(float DeltaTime)
@@ -301,8 +303,17 @@ void ABeachSimulationActor::UpdateParticles(float DeltaTime)
 	ComputeDensityPressure();
 	ComputeForces();
 	float dt = FindIntegrationStep();
+	//for (int i = 0; i < IntegrationSteps; i++)
+#if INTEGRATION_STEP == 1
+	while (DeltaTime > 0)
+	{
+		Integrate(FMath::Min(dt, DeltaTime));
+		DeltaTime -= dt;
+	}
+#elif INTEGRATION_STEP == 2
 	for (int i = 0; i < IntegrationSteps; i++)
-		Integrate(dt);
+		Integrate(FMath::Min(dt, DeltaTime));
+#endif
 #if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE == 2
 	ForEachParticle([&](FParticle* pi)
 		{

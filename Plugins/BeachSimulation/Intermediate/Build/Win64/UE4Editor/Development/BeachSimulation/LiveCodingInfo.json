@@ -3,12 +3,12 @@
 	{
 		"Module.BeachSimulation.cpp.obj": [
 			"BeachSimulation.cpp.obj",
-			"BeachSimulationActor.cpp.obj",
 			"ExternalForceComponent.cpp.obj",
 			"ParticleInstancedComponent.cpp.obj",
 			"ParticleSpawnComponent.cpp.obj",
 			"ParticleSphereComponent.cpp.obj",
 			"ParticleVisualizerComponent.cpp.obj",
+			"BeachSimulationActor.cpp.obj",
 			"SimulationParticle.cpp.obj"
 		],
 		"Module.BeachSimulation.gen.cpp.obj": [

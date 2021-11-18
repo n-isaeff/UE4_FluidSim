@@ -1,5 +1,6 @@
-/.vs/
-/Binaries/
-/Intermediate/
+.vs/
+**/Binaries/
+**/Intermediate/
 /MMA_project.sln
-/Saved/
+Saved/
+DerivedDataCache/

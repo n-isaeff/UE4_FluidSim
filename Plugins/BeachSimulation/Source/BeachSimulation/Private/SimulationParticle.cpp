@@ -94,7 +94,7 @@ void FDomainGrid::RemoveParticleByRef(FParticle* p, const FVector& position)
 
 void FDomainGrid::UpdateParticle(FParticle* p, const FVector& oldPosition)
 {
-	//if (GetCellIndex(oldPosition) == GetCellIndex(p->Position)) return;
+	if (GetCellIndex(oldPosition) == GetCellIndex(p->Position)) return;
 	RemoveParticleByRef(p, oldPosition);
 	InsertParticle(p);
 }
