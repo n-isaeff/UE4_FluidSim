@@ -28,3 +28,7 @@ void UParticleVisualizerComponent::UpdateParticleGeometry(TArray<FParticleRef>* 
 {
 }
 
+void UParticleVisualizerComponent::UpdateParticleGeometry(TArray<FCSParticle>* ps)
+{
+}
+

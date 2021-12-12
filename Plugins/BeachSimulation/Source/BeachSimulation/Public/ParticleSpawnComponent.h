@@ -37,7 +37,7 @@ public:
 	UStaticMeshComponent* RegionMesh;
 
 	UPROPERTY(EditAnywhere)
-	float ParticleMass = 1.f;
+	int ParticleType = 0;
 
 	//UPROPERTY(EditAnywhere)
 	//float RestDensity = 1.f;

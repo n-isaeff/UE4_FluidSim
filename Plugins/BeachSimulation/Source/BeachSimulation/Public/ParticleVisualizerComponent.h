@@ -7,6 +7,8 @@
 
 #include "SimulationParticle.h"
 
+#include "CSSimulationParticle.h"
+
 #include "ParticleVisualizerComponent.generated.h"
 
 
@@ -27,6 +29,7 @@ public:
 		
 public:
 	virtual void UpdateParticleGeometry(TArray<FParticleRef>* ps);
+	virtual void UpdateParticleGeometry(TArray<FCSParticle>* ps);
 
 private:
 

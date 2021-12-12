@@ -20,6 +20,8 @@ public:
 
 	virtual void UpdateParticleGeometry(TArray<FParticleRef>* ps) override;
 
+	virtual void UpdateParticleGeometry(TArray<FCSParticle>* ps) override;
+
 protected:
 	virtual void BeginPlay() override;
 

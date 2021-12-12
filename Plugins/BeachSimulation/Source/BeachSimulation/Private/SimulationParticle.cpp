@@ -1,18 +1,18 @@
 #include "..\Public\SimulationParticle.h"
 
-void FExternalForce::ApplyForce(FParticle* p)
+void FExternalForce::ApplyForce(FParticle* p, const float mass)
 {
 	p->Force += Force;
 }
 
-FParticle::FParticle(const FVector& pos, float m) : Position{ pos }, NewPosition{ pos }, Mass{ m }
+FParticle::FParticle(const FVector& pos, char t) : Position{ pos }, NewPosition{ pos }, Type{ t }
 {
 }
 
 
-void FGravityForce::ApplyForce(FParticle* p)
+void FGravityForce::ApplyForce(FParticle* p, const float mass)
 {
-	p->Force += Force * p->Mass / p->Rho;
+	p->Force += Force * mass; // / p->Rho;
 }
 
 void FDomainGridCell::InsertParticle(FParticle* p)
@@ -125,7 +125,7 @@ void FDomainGrid::GetNeighborParticles(FParticle* p, TArray<FParticle*>* ps)
 	}
 }
 
-void FDomainGrid::ForNeighborParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, float)> body)
+void FDomainGrid::ForNeighborParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, float)> body, float maxDist2)
 {
 	const auto Cp = GetCellIndex(pi->Position);
 	const FIntVector Cmin = {
@@ -151,13 +151,17 @@ void FDomainGrid::ForNeighborParticles(FParticle* pi, TFunction<void(FParticle*,
 					if (pi != pj)
 					{
 						const float dist2 = (pi->Position - pj->Position).SizeSquared();
-						body(pi, pj, dist2);
+						if (dist2 <= maxDist2)
+						{
+							body(pi, pj, dist2);
+						}
 					}
 				}
 			}
 		}
 	}
 }
+
 #if PARTICLE_STORENEIGHBORS == 1
 void FDomainGrid::UpdateParticleNeighbors()
 {
@@ -227,7 +231,7 @@ void FDomainGrid::ForEachCell(TFunction<void(const FIntVector&)> foo)
 	}
 }
 
-void FExternalLocalForce::ApplyForce(FParticle* p)
+void FExternalLocalForce::ApplyForce(FParticle* p, const float mass)
 {
 	if (Region.IsInside(p->Position))
 	{
@@ -243,7 +247,7 @@ void FExternalLocalForce::ApplyForce(FParticle* p)
 //	p->Force += M * coef;
 //}
 
-void FBoudriesForce::ApplyForce(FParticle* p)
+void FBoudriesForce::ApplyForce(FParticle* p, const float mass)
 {
 	const FVector pos = p->Position;
 	const FVector Dmin = (pos - Min).GetAbs(), Dmax = (pos - Max).GetAbs();
@@ -273,4 +277,10 @@ void FBoudriesForce::ApplyForce(FParticle* p)
 	{
 		p->Force += (Dmax.Z) * Strength * FVector(0, 0, -1) / Radius;
 	}
+}
+
+void FParticleTypeInfoInner::CalculateConsts()
+{
+	InvMass = 1 / Mass;
+	InvMass2 = InvMass * InvMass;
 }

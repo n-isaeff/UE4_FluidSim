@@ -1,0 +1,217 @@
+#include "/Engine/Private/Common.ush"
+
+struct Particle 
+{
+    float3  Position;
+    uint    Type;
+    float3  Velocity;
+    float   Rho;
+    float3  Force;
+    float   P;
+};
+
+struct ParticleType
+{
+    float Mass;
+    float RestDensity;
+    float Viscosity;
+    float GasConst;
+    float BoundariesFriction;
+};
+
+// input consts
+float Common_DeltaTime;
+float3 Common_DomainMin;
+float3 Common_DomainMax;
+float Common_KernelSize;
+float Common_MaxVelocity;
+
+// precomputed consts
+static const float pi = 3.14159265;
+
+static const float kernelSizeSquared = Common_KernelSize * Common_KernelSize;
+static const float gaussianKernelConst =  315. / (64. * pi * pow(Common_KernelSize, 9.f));
+static const float spikyKernelConst =  45. / (pi * pow(Common_KernelSize, 6.f));
+static const float viscKernelConst =  45. / (pi * pow(Common_KernelSize, 6.f));
+
+// input buffers
+StructuredBuffer<ParticleType> Common_ParticleTypes;
+
+// output buffer
+RWStructuredBuffer<Particle> Common_ParticlesOut;
+
+#if GRID_USE
+// asds
+int Grid_CellMaxCount;
+int3 Grid_Dimensions;
+float Grid_CellSize;
+RWStructuredBuffer<int> Grid_Indices;
+RWStructuredBuffer<int> Grid_CellCounts;
+
+uint GridGetCellIndex(in float3 pos)
+{
+    uint3 gridPos = uint3(floor(pos.x / Grid_CellSize), floor(pos.y / Grid_CellSize), floor(pos.z / Grid_CellSize)); // consider bit shift instead of division
+    gridPos = clamp(gridPos, uint3(0, 0, 0), Grid_Dimensions - 1);
+    return gridPos.x + gridPos.y * Grid_Dimensions.x + gridPos.z * Grid_Dimensions.x * Grid_Dimensions.y;
+}
+
+void GridInsertParticle(in float3 pos, in uint pi)
+{
+    uint cellIndex = GridGetCellIndex(pos);
+    InterlockedAdd(Grid_CellCounts[cellIndex], 1);
+    Grid_Indices[cellIndex] = pi;
+}
+
+uint GridGetCellStart(in uint cellIndex)
+{
+    return cellIndex * Grid_CellMaxCount;
+}
+
+#endif // GRID_USE
+
+
+void ComputeDensityPressure(inout Particle p, in uint pi, in uint numParticles)
+{
+    #if GRID_USE
+    uint cellIndex = GridGetCellIndex(p.Position);
+    uint cellStart = GridGetCellStart(cellIndex);
+    uint cellCount = Grid_CellCounts[cellIndex];
+    for(uint ji = cellStart; ji <= cellStart + cellCount; ji++)
+    {
+        uint j = Grid_Indices[ji];
+    #else
+    for(uint j = 0; j < numParticles; j++)
+    {
+    #endif
+    
+        if(j != pi)
+        {
+            float d = length(Common_ParticlesOut[j].Position - p.Position);
+            if(d < Common_KernelSize)
+            {
+                Particle pj = Common_ParticlesOut[j];
+                p.Rho += Common_ParticleTypes[pj.Type].Mass * gaussianKernelConst * pow(kernelSizeSquared - d*d, 3.);
+            }
+        }
+    }
+    p.Rho = max(p.Rho, Common_ParticleTypes[p.Type].RestDensity);
+    p.P = Common_ParticleTypes[p.Type].GasConst * (p.Rho - Common_ParticleTypes[p.Type].RestDensity);
+}
+
+void ComputeForces(inout Particle p, in uint pi, in uint numParticles)
+{
+    float3 Fv = { 0., 0., 0. };
+    float3 Fp = { 0., 0., 0. };
+    #if GRID_USE
+    uint cellIndex = GridGetCellIndex(p.Position);
+    uint cellStart = GridGetCellStart(cellIndex);
+    uint cellCount = Grid_CellCounts[cellIndex];
+    for(uint ji = cellStart; ji <= cellStart + cellCount; ji++)
+    {
+        uint j = Grid_Indices[ji];
+    #else
+    for(uint j = 0; j < numParticles; j++)
+    {
+    #endif
+        if(j != pi)
+        {
+            float3 rd = Common_ParticlesOut[j].Position - Common_ParticlesOut[pi].Position;
+            float d = length(rd);
+            if(d < Common_KernelSize)
+            {
+                Particle pj = Common_ParticlesOut[j];
+                float3 r = rd / d;
+                float dr = Common_KernelSize - d;
+                float spikyCoeff = dr * dr;
+                float massRatio = Common_ParticleTypes[pj.Type].Mass / Common_ParticleTypes[p.Type].Mass;
+                float pt = (p.P + pj.P) / (2.0 * p.Rho);
+                Fp -= massRatio * pt * spikyCoeff * r;
+                Fv -= massRatio * (pj.Velocity - p.Velocity) * spikyCoeff;
+            }
+        }
+    }
+    p.Force = spikyKernelConst * Fp + Common_ParticleTypes[p.Type].Viscosity * viscKernelConst * Fv;
+    // External forces
+    p.Force += Common_ParticleTypes[p.Type].Mass * float3(0., 0., -9.8); // gravity
+    
+}
+
+void ApplyBoundariesCondition(inout Particle p)
+{
+    float bFactor = 0.1;
+    float3 bounces = float3(
+        p.Position.x < Common_DomainMin.x || p.Position.x > Common_DomainMax.x ? -bFactor : 1.,
+        p.Position.y < Common_DomainMin.y || p.Position.y > Common_DomainMax.y ? -bFactor : 1.,
+        p.Position.z < Common_DomainMin.z || p.Position.z > Common_DomainMax.z ? -bFactor : 1.
+    );
+    bool bFriction = 
+        p.Position.x < Common_DomainMin.x || p.Position.x > Common_DomainMax.x ||
+        p.Position.y < Common_DomainMin.y || p.Position.y > Common_DomainMax.y ||
+        p.Position.z < Common_DomainMin.z || p.Position.z > Common_DomainMax.z;
+    p.Velocity *= bounces * (bFriction ? Common_ParticleTypes[p.Type].BoundariesFriction : 1.f);
+    p.Position = clamp(p.Position, Common_DomainMin, Common_DomainMax);
+}
+
+void Integrate(inout Particle p)
+{
+    p.Velocity += Common_DeltaTime * (p.Force / Common_ParticleTypes[p.Type].Mass);
+    float v = length(p.Velocity);
+    p.Velocity = v > Common_MaxVelocity ? (p.Velocity * (Common_MaxVelocity / v)) : p.Velocity;
+    p.Position += Common_DeltaTime * p.Velocity;
+    ApplyBoundariesCondition(p);
+}
+
+void Foo(inout Particle p)
+{
+    p.Type = 0;
+    p.Velocity += Common_DeltaTime * (Common_ParticleTypes[p.Type].Mass * float3(0., 0., -9.8) / Common_ParticleTypes[p.Type].Mass);
+    p.Position = p.Position + Common_DeltaTime * p.Velocity;
+    p.Type = 1;
+    ApplyBoundariesCondition(p);
+}
+
+int GetParticleIndex(in uint3 thID)
+{
+    return thID.x;// + ThreadId.y * THREADGROUPSIZE_X + ThreadId.z * (THREADGROUPSIZE_X * THREADGROUPSIZE_Y);
+}
+
+#if GRID_USE
+[numthreads(THREADGROUPSIZE_X , THREADGROUPSIZE_Y, THREADGROUPSIZE_Z)]
+void MainGridBuildShader(uint3 ThreadId : SV_DispatchThreadID)
+{
+    int index = GetParticleIndex(ThreadId);
+    Particle p = Common_ParticlesOut[index];
+    GridInsertParticle(p.Position, index);
+}
+#endif //GRID_USE
+
+[numthreads(THREADGROUPSIZE_X , THREADGROUPSIZE_Y, THREADGROUPSIZE_Z)]
+void MainPressureShader(uint3 ThreadId : SV_DispatchThreadID)
+{
+    int index = GetParticleIndex(ThreadId);
+    Particle p = Common_ParticlesOut[index];
+    uint particleCount = 0, particleStride = 0;
+    Common_ParticlesOut.GetDimensions(particleCount, particleStride);
+    ComputeDensityPressure(p, index, particleCount);
+    Common_ParticlesOut[index] = p;
+}
+
+[numthreads(THREADGROUPSIZE_X , THREADGROUPSIZE_Y, THREADGROUPSIZE_Z)]
+void MainForcesShader(uint3 ThreadId : SV_DispatchThreadID)
+{
+    int index = GetParticleIndex(ThreadId);
+    Particle p = Common_ParticlesOut[index];
+    uint particleCount = 0, particleStride = 0;
+    Common_ParticlesOut.GetDimensions(particleCount, particleStride);
+    ComputeForces(p, index, particleCount);
+    Common_ParticlesOut[index] = p;
+}
+
+[numthreads(THREADGROUPSIZE_X , THREADGROUPSIZE_Y, THREADGROUPSIZE_Z)]
+void MainIntegrateShader(uint3 ThreadId : SV_DispatchThreadID)
+{
+    int index = GetParticleIndex(ThreadId);
+    Particle p = Common_ParticlesOut[index];
+    Integrate(p);
+    Common_ParticlesOut[index] = p;
+}

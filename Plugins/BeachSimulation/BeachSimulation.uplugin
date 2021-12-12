@@ -18,7 +18,7 @@
 		{
 			"Name": "BeachSimulation",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PostConfigInit"
 		}
 	]
 }

@@ -17,6 +17,22 @@
 
 #include "BeachSimulationActor.generated.h"
 
+USTRUCT()
+struct BEACHSIMULATION_API FParticleTypeInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere)
+	float Mass;
+	UPROPERTY(EditAnywhere)
+	float RestDensity;
+	UPROPERTY(EditAnywhere)
+	float Viscosity;
+	UPROPERTY(EditAnywhere)
+	float GasConst;
+	UPROPERTY(EditAnywhere)
+	float BoundariesFriction;
+};
 
 UCLASS()
 class BEACHSIMULATION_API ABeachSimulationActor : public AActor
@@ -33,15 +49,15 @@ private:
 	/**
 	* Cycles through the particles whose distance to pi is less than maxDist and applies body
 	*/
-	void ForClosestParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, float)> body, float maxDist);
+	void ForClosestParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, const FParticleTypeInfoInner&, float)> body, float maxDist);
 	/**
 	* Applies independant operation body to every particle
 	*/
-	void ForEachParticle(TFunction<void(FParticle*)> body);
+	void ForEachParticle(TFunction<void(FParticle*, const FParticleTypeInfoInner&)> body);
 
 	/** Simulation functions (as described in https://lucasschuermann.com/writing/implementing-sph-in-2d) **/
-	void ApplyBoundaryConditions(FParticle* pi);
-	void ApplyExternalForces(FParticle* pi);
+	void ApplyBoundaryConditions(FParticle* pi, const FParticleTypeInfoInner& info);
+	void ApplyExternalForces(FParticle* pi, const FParticleTypeInfoInner& info);
 
 	void ComputeDensityPressure();
 	void ComputeForces();
@@ -52,13 +68,13 @@ private:
 	void UpdateParticles(float DeltaTime);
 	/****/
 
-	void SpawnParticle(const FVector& position, float mass, const FVector& Fi);
-	void SpawnParticles(const FBox& box, const FVector& Fi, float mass, float jitter);
+	void SpawnParticle(const FVector& position, char type, const FVector& Fi);
+	void SpawnParticles(const FBox& box, const FVector& Fi, char type, float jitter);
 	void CheckParticleSpawners();
 public:	
 	virtual void Tick(float DeltaTime) override;
 
-	void SpawnParticlesCube(const FVector& center, float cubeSide, int numSubdiv, float particleMass, float jitter = 0.0f);
+	void SpawnParticlesCube(const FVector& center, float cubeSide, int numSubdiv, char type, float jitter = 0.0f);
 
 public:
 	UPROPERTY(EditAnywhere)
@@ -79,14 +95,14 @@ public:
 	UPROPERTY(EditAnywhere)
 	float KernelSize;
 
-	UPROPERTY(EditAnywhere)
+	/*UPROPERTY(EditAnywhere)
 	float GasConst;
 
 	UPROPERTY(EditAnywhere)
 	float RestDensity;
 
 	UPROPERTY(EditAnywhere)
-	float ViscosityConst;
+	float ViscosityConst;*/
 
 	UPROPERTY(EditAnywhere)
 	float MaxVelocity;
@@ -101,15 +117,16 @@ public:
 	float BoundariesForceRadius;
 
 	UPROPERTY(EditAnywhere)
-	float TimeCoefficient = 1;
-
-	UPROPERTY(EditAnywhere)
 	bool GravityForce = true;
 
 	UPROPERTY(EditAnywhere)
-	int IntegrationSteps = 2;
+	float TimeStep = 1.f / 24.f;
 
-	
+	UPROPERTY(EditAnywhere)
+	int NumberStepsPerFrame = 2;
+
+	UPROPERTY(EditAnywhere)
+	TArray<FParticleTypeInfo> ParticleTypeConsts;
 private:
 	float KernelSizeSquared;
 	float GaussianKernelConst;
@@ -119,8 +136,12 @@ private:
 	TArray<FExternalForceRef> ExternalForces;
 	//naive data structure for particles
 	TArray<FParticleRef> Particles;
+	TArray<FParticleTypeInfoInner> ParticleTypes;
 
 	FDomainGrid ParticlesASDS;
 
 	bool InitializedHalfVelocities = false;
+	FParticleTypeInfoInner WaterInfo;
+	FParticleTypeInfoInner SandInfo;
+	FBox DomainTrimmed;
 };

@@ -29,7 +29,7 @@ ABeachSimulationActor::ABeachSimulationActor()
 	ParticleVisualizer = CreateDefaultSubobject<UParticleSphereComponent>(TEXT("ParticleViz"));
 #endif
 	ParticleSpawners.Add(CreateDefaultSubobject<UParticleSpawnComponent>(TEXT("InitialSpawner")));
-
+	ParticleSpawners.Add(CreateDefaultSubobject<UParticleSpawnComponent>(TEXT("InitialSpawner2")));
 }
 
 void ABeachSimulationActor::BeginPlay()
@@ -39,7 +39,7 @@ void ABeachSimulationActor::BeginPlay()
 	if(DomainMesh) DomainMesh->SetVisibility(false);
 
 	Domain = DomainMesh->GetStaticMesh()->GetBounds().GetBox().TransformBy(DomainMesh->GetRelativeTransform());
-	//const auto rl = RootComponent->GetComponentLocation();
+	DomainTrimmed = Domain.ExpandBy(-FVector(0.1f), -FVector(0.1f));
 	//if (GEngine)
 	//	GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Root location (%f, %f, %f)"), rl.X, rl.Y, rl.Z));
 
@@ -50,6 +50,18 @@ void ABeachSimulationActor::BeginPlay()
 	GaussianKernelConst = 315.f / (64.f * UKismetMathLibrary::GetPI() * FMath::Pow(KernelSize, 9.f));
 	SpikyKernelConst = 45.f / (UKismetMathLibrary::GetPI() * FMath::Pow(KernelSize, 6.f));
 	ViscKernelConst = 45.f / (UKismetMathLibrary::GetPI() * FMath::Pow(KernelSize, 6.f));
+
+	for (int i = 0; i < ParticleTypeConsts.Num(); i++)
+	{
+		ParticleTypes.Add(FParticleTypeInfoInner(ParticleTypeConsts[i].Mass, ParticleTypeConsts[i].RestDensity, ParticleTypeConsts[i].Viscosity, ParticleTypeConsts[i].GasConst, ParticleTypeConsts[i].BoundariesFriction));
+		ParticleTypes.Last().CalculateConsts();
+	}
+	// 2 fluids for now
+	if (ParticleTypeConsts.Num() == 2)
+	{
+		WaterInfo = ParticleTypes[0];
+		SandInfo = ParticleTypes[1];
+	}
 
 #if CLOSESTNEIGHBOR_TYPE >= 2
 	ParticlesASDS = FDomainGrid(KernelSize, Domain.Min, Domain.Max);
@@ -65,12 +77,9 @@ void ABeachSimulationActor::BeginPlay()
 	ExternalForces.Add(FExternalForceRef(new FBoudriesForce(BoundariesForceRadius, BoundariesForce, Domain.Min, Domain.Max)));
 #endif
 
-	//FVector p = Domain.GetCenter();
-	//SpawnParticlesCube(p, 15.f, 13, ParticleMass, 1.f);
-
 }
 
-void ABeachSimulationActor::ForClosestParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, float)> body, float maxDist)
+void ABeachSimulationActor::ForClosestParticles(FParticle* pi, TFunction<void(FParticle*, FParticle*, const FParticleTypeInfoInner&, float)> body, float maxDist)
 {
 #if CLOSESTNEIGHBOR_TYPE == 1
 	//naive approach: cycle though all particles
@@ -81,7 +90,7 @@ void ABeachSimulationActor::ForClosestParticles(FParticle* pi, TFunction<void(FP
 		float distSquared = (pi->Position - Particles[j]->Position).SizeSquared();
 		if (distSquared <= maxDist)
 		{
-			body(pi, &*Particles[j], distSquared);
+			body(pi, &*Particles[j], ParticleTypes[Particles[j]->Type], distSquared);
 		}
 	}
 #elif CLOSESTNEIGHBOR_TYPE == 2
@@ -100,11 +109,12 @@ void ABeachSimulationActor::ForClosestParticles(FParticle* pi, TFunction<void(FP
 #elif CLOSESTNEIGHBOR_TYPE == 3
 	ParticlesASDS.ForNeighborParticles(pi, [&](FParticle* p, FParticle* pj, float dist2)
 		{
-			if (dist2 <= KernelSizeSquared)
-			{
-				body(p, pj, dist2);
-			}
-		});
+			body(p, pj, dist2);
+			//if (dist2 <= KernelSizeSquared)
+			//{
+			//	
+			//}
+		}, KernelSizeSquared);
 #elif CLOSESTNEIGHBOR_TYPE == 4
 	for (auto* pj : pi->Neighbors)
 	{
@@ -112,13 +122,13 @@ void ABeachSimulationActor::ForClosestParticles(FParticle* pi, TFunction<void(FP
 		float dist2 = (pi->Position - pj->Position).SizeSquared();
 		if (dist2 <= maxDist)
 		{
-			body(pi, pj, dist2);
+			body(pi, pj, ParticleTypes[pj->Type], dist2);
 		}
 	}
 #endif
 }
 
-void ABeachSimulationActor::ForEachParticle(TFunction<void(FParticle*)> body)
+void ABeachSimulationActor::ForEachParticle(TFunction<void(FParticle*, const FParticleTypeInfoInner&)> body)
 {
 #if FOREACHPARTICLE_TYPE == 1
 	//naive walk through all particles - may be parallelized
@@ -129,12 +139,12 @@ void ABeachSimulationActor::ForEachParticle(TFunction<void(FParticle*)> body)
 #elif FOREACHPARTICLE_TYPE == 2
 	ParallelFor(Particles.Num(), [&](int32 i) 
 		{ 
-			body(&*Particles[i]); 
+			body(&*Particles[i], ParticleTypes[Particles[i]->Type]);
 		});
 #endif
 }
 
-void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi)
+void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi, const FParticleTypeInfoInner& info)
 {
 #if BOUNDARIES_TYPE == 1
 #if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE == 2
@@ -160,8 +170,8 @@ void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi)
 
 	if (!Domain.IsInsideOrOn(p))
 	{
-		const FVector e{ 0.0005f };
-		FVector Dmin = Domain.Min - e, Dmax = Domain.Max + e;
+		const FVector e{ 0.05f };
+		const FVector Dmin = Domain.Min - e, Dmax = Domain.Max + e;
 		if (p.X >= Dmax.X || p.X <= Dmin.X)
 			pi->Velocity.X *= -BoundariesFactor;
 		if (p.Y >= Dmax.Y || p.Y <= Dmin.Y)
@@ -169,8 +179,14 @@ void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi)
 		if (p.Z >= Dmax.Z || p.Z <= Dmin.Z)
 			pi->Velocity.Z *= -BoundariesFactor;
 		//pi->Velocity *= BoundariesFactor;
-#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE == 2
+		pi->Velocity *= info.BoundariesFriction;
+#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE >= 2
 		pi->NewPosition = Domain.GetClosestPointTo(p);
+		if (pi->NewPosition == Domain.Min)
+		{
+			if (GEngine)
+				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, TEXT("Snapped to min!"));
+		}
 #elif FOREACHPARTICLE_TYPE == 1
 		pi->Position = Domain.GetClosestPointTo(p);
 #endif
@@ -180,11 +196,11 @@ void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi)
 
 }
 
-void ABeachSimulationActor::ApplyExternalForces(FParticle* pi)
+void ABeachSimulationActor::ApplyExternalForces(FParticle* pi, const FParticleTypeInfoInner & info)
 {
 	for (int i = 0; i < ExternalForces.Num(); i++)
 	{
-		ExternalForces[i]->ApplyForce(pi);
+		ExternalForces[i]->ApplyForce(pi, info.Mass);
 	}
 
 	//for (int i = 0; i < LocalForces.Num(); i++)
@@ -195,32 +211,33 @@ void ABeachSimulationActor::ApplyExternalForces(FParticle* pi)
 
 void ABeachSimulationActor::ComputeDensityPressure()
 {
-	ForEachParticle([&](FParticle* p) 
+	ForEachParticle([&](FParticle* p, const FParticleTypeInfoInner& info) 
 		{
 			p->Rho = 0;
-			ForClosestParticles(p, [&](FParticle* pi, FParticle* pj, float distSquared)
+			ForClosestParticles(p, [&](FParticle* pi, FParticle* pj, const FParticleTypeInfoInner& jinfo, float distSquared)
 				{
-					pi->Rho += pj->Mass * GaussianKernelConst * pow(KernelSizeSquared - distSquared, 3.f);
+					pi->Rho += jinfo.Mass * GaussianKernelConst * pow(KernelSizeSquared - distSquared, 3.f);
 				}, KernelSizeSquared);
-			p->Rho = FMath::Max(p->Rho, RestDensity);
-			p->P = GasConst * (p->Rho - RestDensity);
+			p->Rho = FMath::Max(p->Rho, info.RestDensity);
+			p->P = info.GasConst * (p->Rho - info.RestDensity);
 		});
 }
 
 void ABeachSimulationActor::ComputeForces()
 {
-	ForEachParticle([&](FParticle* p)
+	ForEachParticle([&](FParticle* p, const FParticleTypeInfoInner& info)
 		{
 			FVector Fpi{ 0, 0, 0 };
 			FVector Fvi{ 0, 0, 0 };
-			ForClosestParticles(p, [&](FParticle* pi, FParticle* pj, float distSquared)
+			
+			ForClosestParticles(p, [&](FParticle* pi, FParticle* pj, const FParticleTypeInfoInner& jinfo, float distSquared)
 				{
 					const FVector rd = (pj->Position - pi->Position); // .GetSafeNormal();
 					const FVector r = rd / rd.Size();
 					const float 
 						dr			= KernelSize - FMath::Sqrt(distSquared),
 						spikeyCoeff = dr * dr,
-						massRatio	= pj->Mass / pi->Mass,
+						massRatio	= jinfo.Mass * info.InvMass,
 						pt			= (pi->P + pj->P) / (2.0f * pi->Rho);
 
 					Fpi -= massRatio * pt * spikeyCoeff * r;
@@ -230,8 +247,8 @@ void ABeachSimulationActor::ComputeForces()
 				}, KernelSizeSquared);
 			/*if (GEngine)
 				GEngine->AddOnScreenDebugMessage(-1, 15., FColor::Yellow, FString::Printf(TEXT("Final Fv (%f, %f, %f)"), Fvi.X, Fvi.Y, Fvi.Z));*/
-			p->Force = SpikyKernelConst * Fpi + ViscosityConst * ViscKernelConst * Fvi;
-			ApplyExternalForces(p);
+			p->Force = SpikyKernelConst * Fpi + info.Viscosity * ViscKernelConst * Fvi;
+			ApplyExternalForces(p, info);
 		});
 }
 
@@ -247,17 +264,17 @@ void ABeachSimulationActor::Integrate(float dt)
 		InitializedHalfVelocities = true;
 	}
 #endif
-	ForEachParticle([&](FParticle* pi)
+	ForEachParticle([&](FParticle* pi, const FParticleTypeInfoInner& info)
 		{
 #if INTEGRATION_TYPE == 1
-			pi->Velocity += dt * pi->Force / (pi->Rho ); //* pi->Mass
+			pi->Velocity += dt * pi->Force / (pi->Rho); //* pi->Mass
 			pi->Velocity = pi->Velocity.GetClampedToMaxSize(MaxVelocity);
-#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE == 2
+#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE >= 2
 			pi->NewPosition += pi->Velocity * dt;
 #else
 			pi->Position += pi->Velocity * dt;
 #endif
-			ApplyBoundaryConditions(pi);
+			ApplyBoundaryConditions(pi, info);
 #elif INTEGRATION_TYPE == 2
 			const FVector a = pi->Force / (pi->Rho * pi->Mass);
 			pi->HalfVelocity += dt * a;
@@ -278,7 +295,7 @@ float ABeachSimulationActor::FindIntegrationStep()
 	{
 		FParticleRef pi = Particles[i];
 		float v2 = pi->Velocity.SizeSquared();
-		float a2 = pi->Force.SizeSquared() / (pi->Mass * pi->Mass);
+		float a2 = pi->Force.SizeSquared() * ParticleTypes[pi->Type].InvMass2;//(pi->Mass * pi->Mass);
 		float c2 = pi->P / pi->Rho;
 		maxv2 = FMath::Max(maxv2, v2);
 		maxa2 = FMath::Max(maxa2, a2);
@@ -302,20 +319,20 @@ void ABeachSimulationActor::UpdateParticles(float DeltaTime)
 #endif
 	ComputeDensityPressure();
 	ComputeForces();
-	float dt = FindIntegrationStep();
 	//for (int i = 0; i < IntegrationSteps; i++)
 #if INTEGRATION_STEP == 1
+	float dt = FindIntegrationStep();
 	while (DeltaTime > 0)
 	{
 		Integrate(FMath::Min(dt, DeltaTime));
 		DeltaTime -= dt;
 	}
 #elif INTEGRATION_STEP == 2
-	for (int i = 0; i < IntegrationSteps; i++)
-		Integrate(FMath::Min(dt, DeltaTime));
+	for (int i = 0; i < NumberStepsPerFrame; i++)
+		Integrate(FMath::Min(TimeStep, DeltaTime));
 #endif
-#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE == 2
-	ForEachParticle([&](FParticle* pi)
+#if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE >= 2
+	ForEachParticle([&](FParticle* pi, const FParticleTypeInfoInner& info)
 		{
 #if CLOSESTNEIGHBOR_TYPE >= 2
 			const FVector oldPos = pi->Position;
@@ -335,14 +352,16 @@ void ABeachSimulationActor::UpdateParticles(float DeltaTime)
 	}*/
 }
 
-void ABeachSimulationActor::SpawnParticle(const FVector& position, float mass, const FVector& Vi)
+void ABeachSimulationActor::SpawnParticle(const FVector& position, char type, const FVector& Vi)
 {
-	Particles.Add(FParticleRef(new FParticle(position, mass)));
+	Particles.Add(FParticleRef(new FParticle(position, type)));
 	Particles.Last()->Velocity = Vi;
+#if CLOSESTNEIGHBOR_TYPE >= 2
 	ParticlesASDS.InsertParticle(&*Particles[Particles.Num() - 1]);
+#endif
 }
 
-void ABeachSimulationActor::SpawnParticles(const FBox& box, const FVector& Vi, float mass, float jitter)
+void ABeachSimulationActor::SpawnParticles(const FBox& box, const FVector& Vi, char type, float jitter)
 {
 	FBox ValidBox(box.Min.ComponentMax(Domain.Min), box.Max.ComponentMin(Domain.Max));
 	if (GEngine) 
@@ -351,7 +370,7 @@ void ABeachSimulationActor::SpawnParticles(const FBox& box, const FVector& Vi, f
 		GEngine->AddOnScreenDebugMessage(-1, 15, FColor::Yellow, FString::Printf(TEXT("Max: %f %f %f"), ValidBox.Max.X, ValidBox.Max.Y, ValidBox.Max.Z));
 	}
 	if (!ValidBox.IsValid) return;
-	float dp = FMath::Pow(mass / RestDensity, 1. / 3.f);
+	float dp = FMath::Pow(ParticleTypes[type].Mass / ParticleTypes[type].RestDensity, 1. / 3.f);
 	for (float dx = ValidBox.Min.X; dx <= ValidBox.Max.X; dx += dp)
 	{
 		for (float dy = ValidBox.Min.Y; dy <= ValidBox.Max.Y; dy += dp)
@@ -360,7 +379,7 @@ void ABeachSimulationActor::SpawnParticles(const FBox& box, const FVector& Vi, f
 			{
 				FVector j(FMath::RandRange(0.f, 1.f), FMath::RandRange(0.f, 1.f), FMath::RandRange(0.f, 1.f));
 				j.Normalize();
-				SpawnParticle(FVector(dx, dy, dz) + j * jitter, mass, Vi);
+				SpawnParticle(FVector(dx, dy, dz) + j * jitter, type, Vi);
 			}
 		}
 	}
@@ -374,7 +393,7 @@ void ABeachSimulationActor::CheckParticleSpawners()
 		while (s->SpawnQueue.Num() > 0)
 		{
 			auto spawnRequest = s->SpawnQueue.Pop();
-			SpawnParticles(spawnRequest.Region, spawnRequest.InitialVelocity, s->ParticleMass, s->Jitter);
+			SpawnParticles(spawnRequest.Region, spawnRequest.InitialVelocity, s->ParticleType, s->Jitter);
 		}
 	}
 }
@@ -385,9 +404,6 @@ void ABeachSimulationActor::Tick(float DeltaTime)
 	auto StartTime = FPlatformTime::Seconds();
 
 	CheckParticleSpawners();
-	//float dt = DeltaTime / (float) IntegrationSteps;
-
-	//for(int i = 0; i < IntegrationSteps; i++)
 	UpdateParticles(DeltaTime);
 
 	auto ComputeTime = FPlatformTime::Seconds();
@@ -399,9 +415,9 @@ void ABeachSimulationActor::Tick(float DeltaTime)
 	}
 }
 
-void ABeachSimulationActor::SpawnParticlesCube(const FVector& center, float cubeSide, int numSubdiv, float particleMass, float jitter)
+void ABeachSimulationActor::SpawnParticlesCube(const FVector& center, float cubeSide, int numSubdiv, char type, float jitter)
 {
-	float dp = FMath::Max(cubeSide / (float) numSubdiv, FMath::Pow(particleMass / RestDensity, 1./3.f));
+	float dp = FMath::Max(cubeSide / (float) numSubdiv, FMath::Pow(ParticleTypes[type].Mass / ParticleTypes[type].RestDensity, 1./3.f));
 	for (float dx = center.X - cubeSide * 0.5f; dx <= center.X + cubeSide * 0.5f; dx += dp)
 	{
 		for (float dy = center.Y - cubeSide * 0.5f; dy <= center.Y + cubeSide * 0.5f; dy += dp)
@@ -410,7 +426,7 @@ void ABeachSimulationActor::SpawnParticlesCube(const FVector& center, float cube
 			{
 				FVector j(FMath::RandRange(0.f, 1.f), FMath::RandRange(0.f, 1.f), FMath::RandRange(0.f, 1.f));
 				j.Normalize();
-				SpawnParticle(FVector(dx, dy, dz) + j * jitter, particleMass, { 0, 0, 0 });
+				SpawnParticle(FVector(dx, dy, dz) + j * jitter, ParticleTypes[type].Mass, { 0, 0, 0 });
 			}
 		}
 	}

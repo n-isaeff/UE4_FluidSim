@@ -3,10 +3,63 @@
 
 #include "ParticleInstancedComponent.h"
 
+#define VISUALIZE_ALL 1
+
 UParticleInstancedComponent::UParticleInstancedComponent()
 {
 	BaseParticle = CreateDefaultSubobject<UStaticMesh>(TEXT("BaseParticleMesh"));
 	Material = CreateDefaultSubobject<UMaterialInstance>(TEXT("BaseParticleMaterial"));
+}
+
+void UParticleInstancedComponent::UpdateParticleGeometry(TArray<FCSParticle>* ps)
+{
+	int32 instNum = ParticleInstances->GetInstanceCount();
+	if (ps->Num() > instNum)
+	{
+		if (GEngine)
+			GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Adding new insts...")));
+		for (int i = instNum; i < ps->Num(); i++)
+		{
+			ParticleInstances->AddInstanceWorldSpace(FTransform(FRotator(0, 0, 0), FVector(0.f), FVector(ParticleSize)));
+		}
+		if (GEngine)
+			GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Added new insts (%d)!"), ParticleInstances->GetInstanceCount()));
+	}
+	if (ps->Num() < instNum)
+	{
+		for (int32 i = ps->Num(); i < instNum; i++)
+		{
+			ParticleInstances->RemoveInstance(i);
+		}
+	}
+	TArray<FTransform> newPos;
+	for (int32 i = 0; i < ps->Num(); i++)
+	{
+		newPos.Add(FTransform(FRotator(0, 0, 0), (*ps)[i].Position, FVector(ParticleSize, ParticleSize, ParticleSize)));
+	}
+	if (!ParticleInstances->BatchUpdateInstancesTransforms(0, newPos, true, false, true))
+	{
+		/*if (GEngine)
+			GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Failed to update particle instances positions")));*/
+	}
+	//ParticleInstances->
+	for (int32 i = 0; i < ps->Num(); i++)
+	{
+#if VISUALIZE_ALL == 1
+		if (!ParticleInstances->SetCustomData(i,
+			{
+				(*ps)[i].Velocity.SizeSquared() / (*ps)[i].Rho,
+				(float)((*ps)[i].Type)
+			}, true))
+		{
+#else
+		if (!ParticleInstances->SetCustomDataValue(i, 0, (*ps)[i].Velocity.SizeSquared() / (*ps)[i].Force.SizeSquared(), true))
+		{
+#endif
+			if (GEngine)
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, FString::Printf(TEXT("Unable to supply instance data")));
+		}
+		}
 }
 
 void UParticleInstancedComponent::BeginPlay()
@@ -15,7 +68,7 @@ void UParticleInstancedComponent::BeginPlay()
 	if (!ParticleInstances)
 	{
 		ParticleInstances = NewObject<UInstancedStaticMeshComponent>(this);
-		ParticleInstances->NumCustomDataFloats = 1;
+		ParticleInstances->NumCustomDataFloats = 1 + VISUALIZE_ALL;
 		ParticleInstances->SetStaticMesh(BaseParticle);
 		ParticleInstances->SetMaterial(0, Material);
 		ParticleInstances->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -60,10 +113,19 @@ void UParticleInstancedComponent::UpdateParticleGeometry(TArray<FParticleRef>* p
 	//ParticleInstances->
 	for (int32 i = 0; i < ps->Num(); i++)
 	{
-		if (!ParticleInstances->SetCustomDataValue(i, 0, (*ps)[i]->Velocity.SizeSquared() / (*ps)[i]->Rho, true))
+#if VISUALIZE_ALL == 1
+		if(!ParticleInstances->SetCustomData(i, 
+			{ 
+				(*ps)[i]->Velocity.SizeSquared() / (*ps)[i]->Rho, 
+				(float)((*ps)[i]->Type) 
+			}, true))
 		{
+#else
+		if (!ParticleInstances->SetCustomDataValue(i, 0, (*ps)[i]->Velocity.SizeSquared() / (*ps)[i]->Force.SizeSquared(), true))
+		{
+#endif
 			if (GEngine)
-				GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Unable to supply instance data")));
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, FString::Printf(TEXT("Unable to supply instance data")));
 		}
 	}
 	//ParticleInstances->BatchUpdateInstancesData

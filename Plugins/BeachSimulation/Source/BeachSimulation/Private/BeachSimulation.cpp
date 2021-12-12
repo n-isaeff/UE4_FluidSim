@@ -1,12 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BeachSimulation.h"
+#include "Runtime/Core/Public/Modules/ModuleManager.h"
+#include "Interfaces/IPluginManager.h"
 
 #define LOCTEXT_NAMESPACE "FBeachSimulationModule"
 
 void FBeachSimulationModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
+	FString PluginDir = FPaths::Combine(FPaths::Combine(FPaths::ProjectDir(), TEXT("Plugins")), TEXT("BeachSimulation"));
+	FString ShaderDirectory = FPaths::Combine(PluginDir, TEXT("Shaders"));
+	AddShaderSourceDirectoryMapping("/BeachSimulationShaders", ShaderDirectory);
 }
 
 void FBeachSimulationModule::ShutdownModule()
