@@ -35,6 +35,10 @@ public:
 	UPROPERTY(EditAnywhere)
 	UStaticMeshComponent* RegionMesh;
 
+	UPROPERTY(EditAnywhere)
+	float Strength = 100;
+
+	bool bIsSet = false;
 private:
 	FExternalLocalForceRef Force;
 };

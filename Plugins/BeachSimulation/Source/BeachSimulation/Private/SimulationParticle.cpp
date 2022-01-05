@@ -12,7 +12,7 @@ FParticle::FParticle(const FVector& pos, char t) : Position{ pos }, NewPosition{
 
 void FGravityForce::ApplyForce(FParticle* p, const float mass)
 {
-	p->Force += Force * mass; // / p->Rho;
+	p->Force += Force * mass * p->Rho;
 }
 
 void FDomainGridCell::InsertParticle(FParticle* p)

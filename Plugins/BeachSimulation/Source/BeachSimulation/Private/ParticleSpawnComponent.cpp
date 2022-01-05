@@ -24,5 +24,6 @@ void UParticleSpawnComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 void UParticleSpawnComponent::SpawnParticles()
 {
-	SpawnQueue.Push({ RegionMesh->GetStaticMesh()->GetBounds().GetBox().TransformBy(RegionMesh->GetComponentTransform()) , InitialVelocity });
+	if (RegionMesh->GetStaticMesh())
+		SpawnQueue.Push({ RegionMesh->GetStaticMesh()->GetBounds().GetBox().TransformBy(RegionMesh->GetComponentTransform()) , InitialVelocity });
 }

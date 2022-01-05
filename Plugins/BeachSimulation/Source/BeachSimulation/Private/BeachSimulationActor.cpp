@@ -30,6 +30,8 @@ ABeachSimulationActor::ABeachSimulationActor()
 #endif
 	ParticleSpawners.Add(CreateDefaultSubobject<UParticleSpawnComponent>(TEXT("InitialSpawner")));
 	ParticleSpawners.Add(CreateDefaultSubobject<UParticleSpawnComponent>(TEXT("InitialSpawner2")));
+
+	LocalForces.Add(CreateDefaultSubobject<UExternalForceComponent>(TEXT("TidalForce")));
 }
 
 void ABeachSimulationActor::BeginPlay()
@@ -39,7 +41,7 @@ void ABeachSimulationActor::BeginPlay()
 	if(DomainMesh) DomainMesh->SetVisibility(false);
 
 	Domain = DomainMesh->GetStaticMesh()->GetBounds().GetBox().TransformBy(DomainMesh->GetRelativeTransform());
-	DomainTrimmed = Domain.ExpandBy(-FVector(0.1f), -FVector(0.1f));
+	DomainTrimmed = Domain.ExpandBy(-FVector(0.05f), -FVector(0.05f));
 	//if (GEngine)
 	//	GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("Root location (%f, %f, %f)"), rl.X, rl.Y, rl.Z));
 
@@ -56,12 +58,7 @@ void ABeachSimulationActor::BeginPlay()
 		ParticleTypes.Add(FParticleTypeInfoInner(ParticleTypeConsts[i].Mass, ParticleTypeConsts[i].RestDensity, ParticleTypeConsts[i].Viscosity, ParticleTypeConsts[i].GasConst, ParticleTypeConsts[i].BoundariesFriction));
 		ParticleTypes.Last().CalculateConsts();
 	}
-	// 2 fluids for now
-	if (ParticleTypeConsts.Num() == 2)
-	{
-		WaterInfo = ParticleTypes[0];
-		SandInfo = ParticleTypes[1];
-	}
+
 
 #if CLOSESTNEIGHBOR_TYPE >= 2
 	ParticlesASDS = FDomainGrid(KernelSize, Domain.Min, Domain.Max);
@@ -76,6 +73,12 @@ void ABeachSimulationActor::BeginPlay()
 #if BOUNDARIES_TYPE == 3
 	ExternalForces.Add(FExternalForceRef(new FBoudriesForce(BoundariesForceRadius, BoundariesForce, Domain.Min, Domain.Max)));
 #endif
+
+	for (auto LocalForce : LocalForces)
+	{
+		if(LocalForce->bIsSet)
+			ExternalForces.Add(LocalForce->GetForceRef());
+	}
 
 }
 
@@ -171,22 +174,20 @@ void ABeachSimulationActor::ApplyBoundaryConditions(FParticle* pi, const FPartic
 	if (!Domain.IsInsideOrOn(p))
 	{
 		const FVector e{ 0.05f };
-		const FVector Dmin = Domain.Min - e, Dmax = Domain.Max + e;
-		if (p.X >= Dmax.X || p.X <= Dmin.X)
+		//const FVector e{ 0 };
+		const FVector Dmin = Domain.Min, Dmax = Domain.Max;
+		if (p.X > Dmax.X || p.X < Dmin.X)
 			pi->Velocity.X *= -BoundariesFactor;
-		if (p.Y >= Dmax.Y || p.Y <= Dmin.Y)
+		if (p.Y > Dmax.Y || p.Y < Dmin.Y)
 			pi->Velocity.Y *= -BoundariesFactor;
-		if (p.Z >= Dmax.Z || p.Z <= Dmin.Z)
+		if (p.Z > Dmax.Z || p.Z < Dmin.Z)
 			pi->Velocity.Z *= -BoundariesFactor;
 		//pi->Velocity *= BoundariesFactor;
 		pi->Velocity *= info.BoundariesFriction;
 #if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE >= 2
-		pi->NewPosition = Domain.GetClosestPointTo(p);
-		if (pi->NewPosition == Domain.Min)
-		{
-			if (GEngine)
-				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, TEXT("Snapped to min!"));
-		}
+
+		pi->NewPosition = DomainTrimmed.GetClosestPointTo(p);
+
 #elif FOREACHPARTICLE_TYPE == 1
 		pi->Position = Domain.GetClosestPointTo(p);
 #endif
@@ -233,7 +234,7 @@ void ABeachSimulationActor::ComputeForces()
 			ForClosestParticles(p, [&](FParticle* pi, FParticle* pj, const FParticleTypeInfoInner& jinfo, float distSquared)
 				{
 					const FVector rd = (pj->Position - pi->Position); // .GetSafeNormal();
-					const FVector r = rd / rd.Size();
+					const FVector r = rd.GetSafeNormal();// / rd.Size();
 					const float 
 						dr			= KernelSize - FMath::Sqrt(distSquared),
 						spikeyCoeff = dr * dr,
@@ -267,7 +268,7 @@ void ABeachSimulationActor::Integrate(float dt)
 	ForEachParticle([&](FParticle* pi, const FParticleTypeInfoInner& info)
 		{
 #if INTEGRATION_TYPE == 1
-			pi->Velocity += dt * pi->Force / (pi->Rho); //* pi->Mass
+			pi->Velocity += dt * pi->Force / (pi->Rho * info.Mass); //* pi->Mass
 			pi->Velocity = pi->Velocity.GetClampedToMaxSize(MaxVelocity);
 #if FOREACHPARTICLE_TYPE == 2 || CLOSESTNEIGHBOR_TYPE >= 2
 			pi->NewPosition += pi->Velocity * dt;
