@@ -17,6 +17,8 @@
 // INTEGRATION_STEP: 1 - adaptive, 2 -constant
 #define INTEGRATION_STEP 2
 
+#define SHOW_FPS_INGAME 1
+
 
 ABeachSimulationActor::ABeachSimulationActor()
 {
@@ -79,6 +81,11 @@ void ABeachSimulationActor::BeginPlay()
 		if(LocalForce->bIsSet)
 			ExternalForces.Add(LocalForce->GetForceRef());
 	}
+
+#if SHOW_FPS_INGAME == 1
+	if(GetWorld())
+		GetWorld()->Exec(GetWorld(), TEXT("stat fps"));
+#endif
 
 }
 

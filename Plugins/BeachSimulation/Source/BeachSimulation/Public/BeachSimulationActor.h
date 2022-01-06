@@ -83,10 +83,10 @@ public:
 	UPROPERTY(EditAnywhere)
 	UParticleVisualizerComponent* ParticleVisualizer;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<UExternalForceComponent *> LocalForces;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<UParticleSpawnComponent*> ParticleSpawners;
 
 	UPROPERTY(EditAnywhere)
